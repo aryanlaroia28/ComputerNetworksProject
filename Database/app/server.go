@@ -20,6 +20,10 @@ var autoSaveSignal = make(chan struct{})
 func main() {
 	fmt.Println("Logs from your program will appear here!")
 
+	// Initialize the new SQL cache and backing DB
+	command.InitSQLCache()
+	command.InitBackingDB()
+
 	// Start a goroutine that listens for auto-save signals
 	go autoSaveRoutine()
 
@@ -67,7 +71,7 @@ func handleConnection(c net.Conn) {
 	buf := make([]byte, 1024)
 
 	for {
-		_, err := c.Read(buf)
+		n, err := c.Read(buf)
 		if err != nil {
 			if err.Error() == "EOF" {
 				fmt.Println("Client closed the connection")
@@ -76,7 +80,11 @@ func handleConnection(c net.Conn) {
 			fmt.Println("Error reading:", err.Error())
 			return
 		}
-		input := strings.TrimSpace(string(buf))
+		// Use n to get the actual data read
+		input := strings.TrimSpace(string(buf[:n]))
+		if input == "" {
+			continue
+		}
 		fmt.Println("Received:", input)
 
 		// Transaction handling
@@ -89,7 +97,11 @@ func handleConnection(c net.Conn) {
 				command.QueueCommand(input)
 			}
 		} else {
-			if strings.Contains(input, "ECHO") {
+			// --- ADDED SQL HANDLER ---
+			// We check for "SELECT" or the new "SQL" command
+			if strings.Contains(strings.ToUpper(input), "SELECT") || strings.Contains(strings.ToUpper(input), "SQL") {
+				command.HandleSQL(input, c)
+			} else if strings.Contains(input, "ECHO") {
 				command.HandleEcho(input, c)
 			} else if strings.Contains(input, "AUTOSAVE-ON") {
 				autoSaveMutex.Lock()
@@ -127,7 +139,7 @@ func handleConnection(c net.Conn) {
 				command.HandleExec(input, c)
 			} else if strings.Contains(input, "DISCARD") {
 				command.HandleDiscard(input, c)
-			}else if strings.Contains(input, "INCR") {
+			} else if strings.Contains(input, "INCR") {
 				command.HandleINCR(input, c)
 			} else {
 				c.Write([]byte("-ERR unknown command\r\n"))

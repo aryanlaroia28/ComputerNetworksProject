@@ -1,0 +1,349 @@
+package command
+
+import (
+	"fmt"
+	"net"
+	// "strconv"
+	"strings"
+	"time"
+)
+
+// HandleSQL is the main entry point for SQL queries.
+func HandleSQL(input string, c net.Conn) {
+	// 1. Extract the raw SQL query string.
+	// We assume a simple, non-RESP format for this new command,
+	// e.g., "SELECT * FROM users WHERE age > 40"
+	// Or, if it follows the old format, it's wrapped.
+	// Let's assume the `input` is just the SQL string for now.
+	// The server.go logic will be adjusted to just pass the query.
+	
+	// Let's re-parse based on the server's brittle split.
+	// *2\r\n$3\r\nSQL\r\n$27\r\nSELECT * FROM users WHERE age > 40
+	// This would mean parts[4] is the SQL.
+	// But server.go just does `strings.Contains`.
+	// Let's make a new simple parser for the input.
+	
+	sqlQueryString := extractSQLQuery(input)
+	if sqlQueryString == "" {
+		c.Write([]byte("-ERR invalid SQL command\r\n"))
+		return
+	}
+
+	// 2. Parse the SQL string into an AST.
+	queryAST, err := ParseSQL(sqlQueryString)
+	if err != nil {
+		c.Write([]byte(fmt.Sprintf("-ERR %s\r\n", err.Error())))
+		return
+	}
+
+	// --- CACHE LOGIC ---
+
+	// 3. Check for a Direct Cache Hit
+	if entry, hit := SQLCache.Get(sqlQueryString); hit {
+		// Cache Hit!
+		fmt.Println("Cache HIT (Direct)")
+		resp := formatResults(entry.Results)
+		c.Write([]byte(resp))
+		return
+	}
+
+	// 4. Check for a Semantic Cache Hit
+	if results, hit := SQLCache.FindSemanticHit(queryAST); hit {
+		// Semantic Hit!
+		fmt.Println("Cache HIT (Semantic)")
+		resp := formatResults(results)
+		c.Write([]byte(resp))
+		// Note: We don't add this subset query to the cache,
+		// as the superset is already cached and is more valuable.
+		return
+	}
+
+	// 5. Cache Miss
+	fmt.Println("Cache MISS")
+	// Simulate the I/O penalty for a cache miss
+	time.Sleep(CACHE_MISS_PENALTY)
+
+	// 6. Execute query against the "Backing Database"
+	results, err := executeOnBackingStore(queryAST)
+	if err != nil {
+		c.Write([]byte(fmt.Sprintf("-ERR %s\r\n", err.Error())))
+		return
+	}
+
+	// 7. Add the new result to the cache
+	SQLCache.AddToCache(sqlQueryString, queryAST, results)
+
+	// 8. Return results to client
+	resp := formatResults(results)
+	c.Write([]byte(resp))
+}
+
+// extractSQLQuery assumes the input is the raw buffer and finds the SQL.
+// This is fragile and mimics your existing `strings.Contains`.
+// A better way would be a proper RESP parser.
+func extractSQLQuery(input string) string {
+	// A simple heuristic: find "SELECT" and return the rest.
+	// This assumes the command is just the SQL query itself.
+	// e.g. "SELECT * FROM users WHERE age > 40"
+	
+	// Let's assume the server is passing the *full* RESP buffer
+	// e.g. *2\r\n$3\r\nSQL\r\n$27\r\nSELECT * FROM users WHERE age > 40\r\n
+	// Your existing code uses `strings.Split(input, "\r\n")`
+	
+	parts := strings.Split(input, "\r\n")
+	
+	// Let's define a new command format: "SQL <query>"
+	// RESP: *2\r\n$3\r\nSQL\r\n$<len>\r\n<query>\r\n
+	// parts[0] = *2
+	// parts[1] = $3
+	// parts[2] = SQL
+	// parts[3] = $<len>
+	// parts[4] = <query>
+	if len(parts) > 4 && (strings.EqualFold(parts[2], "SQL") || strings.Contains(parts[4], "SELECT")) {
+		// This handles "SQL <query>" or just "SELECT ..."
+		if strings.Contains(parts[4], "SELECT") {
+			return parts[4]
+		}
+		// Fallback for just "SELECT..."
+	}
+	
+	// Fallback for "SELECT ..." as the first command
+	if len(parts) > 4 && strings.Contains(parts[0], "SELECT"){
+		// This is likely wrong, let's assume `input` is just the query.
+	}
+
+	// This is the most likely good assumption based on your `server.go`
+	if strings.Contains(input, "SELECT") {
+		// Find the first "SELECT" and trim
+		idx := strings.Index(strings.ToUpper(input), "SELECT")
+		if idx != -1 {
+			// Find the end of the query (e.g., \r\n or end of string)
+			query := input[idx:]
+			endIdx := strings.Index(query, "\r\n")
+			if endIdx != -1 {
+				query = query[:endIdx]
+			}
+			return strings.TrimSpace(query)
+		}
+	}
+	
+	// Let's refine the "SQL" command assumption from above
+	// *2\r\n$3\r\nSQL\r\n$27\r\nSELECT * FROM users WHERE age > 40\r\n
+	if len(parts) > 4 && strings.EqualFold(parts[2], "SQL") {
+		return parts[4]
+	}
+
+	return "" // No valid SQL found
+}
+
+
+// executeOnBackingStore runs the query against the main data.
+func executeOnBackingStore(query *QueryAST) (*Table, error) {
+	dbMutex.RLock()
+	defer dbMutex.RUnlock()
+
+	table, exists := BackingDatabase[query.FromTable]
+	if !exists {
+		return nil, fmt.Errorf("table '%s' not found", query.FromTable)
+	}
+
+	var resultRows []Row
+	
+	// Filter rows
+	for _, row := range table.Rows {
+		if query.Where == nil || checkCondition(row, query.Where) {
+			resultRows = append(resultRows, row)
+		}
+	}
+
+	// Apply column selection
+	// For simplicity, we'll return all columns if "*"
+	// Otherwise, we'd filter the map keys in each row.
+	// Let's do that.
+	
+	finalRows := []Row{}
+	for _, row := range resultRows {
+		if query.SelectColumns[0] == "*" {
+			finalRows = append(finalRows, row)
+		} else {
+			newRow := make(Row)
+			for _, col := range query.SelectColumns {
+				if val, ok := row[col]; ok {
+					newRow[col] = val
+				}
+			}
+			finalRows = append(finalRows, newRow)
+		}
+	}
+	
+	finalCols := query.SelectColumns
+	if finalCols[0] == "*" {
+		finalCols = table.Columns
+	}
+
+	return &Table{
+		Name:    "results",
+		Columns: finalCols,
+		Rows:    finalRows,
+	}, nil
+}
+
+// formatResults converts a Table into a RESP bulk string.
+func formatResults(table *Table) string {
+	if len(table.Rows) == 0 {
+		return "$-1\r\n" // Nil bulk string (or we could do empty table)
+	}
+
+	var sb strings.Builder
+	
+	// Header
+	sb.WriteString(strings.Join(table.Columns, " | "))
+	sb.WriteString("\n")
+	sb.WriteString(strings.Repeat("-", len(sb.String())-1))
+	sb.WriteString("\n")
+
+	// Rows
+	for _, row := range table.Rows {
+		var vals []string
+		for _, col := range table.Columns {
+			vals = append(vals, fmt.Sprintf("%v", row[col]))
+		}
+		sb.WriteString(strings.Join(vals, " | "))
+		sb.WriteString("\n")
+	}
+
+	tableString := sb.String()
+	return fmt.Sprintf("$%d\r\n%s\r\n", len(tableString), tableString)
+}
+
+// --- Semantic Logic ---
+
+// isQuerySubset checks if newQuery is a semantic subset of cachedQuery.
+func isQuerySubset(newQuery, cachedQuery *QueryAST) bool {
+	if newQuery.FromTable != cachedQuery.FromTable {
+		return false
+	}
+	
+	// Check select columns (new must be subset of cached)
+	if cachedQuery.SelectColumns[0] != "*" {
+		// If cached isn't "*", new must have columns <= cached
+		colMap := make(map[string]bool)
+		for _, col := range cachedQuery.SelectColumns {
+			colMap[col] = true
+		}
+		for _, col := range newQuery.SelectColumns {
+			if col != "*" && !colMap[col] {
+				return false // New query asks for a column not in cache
+			}
+		}
+	}
+	// If cached is "*", new can be anything (including "*" or "col1, col2")
+	
+	// Check WHERE clause (new must be stricter than cached)
+	return isConditionSubset(newQuery.Where, cachedQuery.Where)
+}
+
+// isConditionSubset is the core semantic logic.
+func isConditionSubset(newCond, cachedCond *WhereCondition) bool {
+	if cachedCond == nil {
+		// Cached query was "SELECT * FROM table"
+		// New query is always a subset (e.g., "... WHERE age > 50")
+		return true
+	}
+	
+	if newCond == nil {
+		// New query is "SELECT * FROM table"
+		// Cached query is "... WHERE age > 40"
+		// This is NOT a subset.
+		return false
+	}
+	
+	// Both queries have WHERE clauses.
+	if newCond.Column != cachedCond.Column {
+		return false // Conditions are on different columns
+	}
+	
+	// Try to compare as integers
+	newVal, newIsInt := newCond.GetAsInt()
+	cachedVal, cachedIsInt := cachedCond.GetAsInt()
+
+	if newIsInt && cachedIsInt {
+		// This is where we implement your example:
+		// new = "age > 50", cached = "age > 40"
+		if newCond.Operator == ">" && cachedCond.Operator == ">" {
+			return newVal >= cachedVal // 50 >= 40 -> true
+		}
+		// new = "age < 30", cached = "age < 40"
+		if newCond.Operator == "<" && cachedCond.Operator == "<" {
+			return newVal <= cachedVal // 30 <= 40 -> true
+		}
+		// new = "age = 55", cached = "age > 50"
+		if newCond.Operator == "=" && cachedCond.Operator == ">" {
+			return newVal > cachedVal // 55 > 50 -> true
+		}
+		// new = "age = 45", cached = "age < 50"
+		if newCond.Operator == "=" && cachedCond.Operator == "<" {
+			return newVal < cachedVal // 45 < 50 -> true
+		}
+		// ... more rules could be added here ...
+	}
+	
+	// Fallback for string comparison
+	if newCond.Operator == "=" && cachedCond.Operator == "=" {
+		return newCond.Value == cachedCond.Value
+	}
+
+	return false
+}
+
+// filterResultsFromSuperset takes a cached superset and applies the new, stricter filter.
+func filterResultsFromSuperset(superset *Table, newCondition *WhereCondition) *Table {
+	if newCondition == nil {
+		return superset // Should not happen if isConditionSubset is correct
+	}
+
+	var filteredRows []Row
+	for _, row := range superset.Rows {
+		if checkCondition(row, newCondition) {
+			filteredRows = append(filteredRows, row)
+		}
+	}
+	
+	return &Table{
+		Name:    "filtered_results",
+		Columns: superset.Columns,
+		Rows:    filteredRows,
+	}
+}
+
+// checkCondition evaluates a row against a WHERE condition.
+func checkCondition(row Row, cond *WhereCondition) bool {
+	val, ok := row[cond.Column]
+	if !ok {
+		return false // Column doesn't exist in row
+	}
+
+	// Try integer comparison
+	condVal, condIsInt := cond.GetAsInt()
+	rowVal, rowIsInt := val.(int)
+
+	if condIsInt && rowIsInt {
+		switch cond.Operator {
+		case ">":
+			return rowVal > condVal
+		case "<":
+			return rowVal < condVal
+		case "=":
+			return rowVal == condVal
+		}
+	}
+
+	// Try string comparison
+	condValStr := cond.Value
+	rowValStr := fmt.Sprintf("%v", val)
+	if cond.Operator == "=" {
+		return rowValStr == condValStr
+	}
+
+	return false // Unsupported operation
+}
