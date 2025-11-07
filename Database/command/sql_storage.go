@@ -3,6 +3,7 @@ package command
 import (
 	"container/list"
 	"LiteDB/storage"
+	"fmt"
 	"sync"
 	"time"
 )
@@ -39,6 +40,13 @@ type SemanticCache struct {
 	lookup  map[string]*list.Element // Maps *query string* to list element for fast direct hits
 	mu      sync.RWMutex
 	maxSize int
+
+	// --- NEW: Cache Statistics ---
+	totalQueries uint64
+	directHits   uint64
+	semanticHits uint64
+	cacheMisses  uint64
+	// --- End NEW ---
 }
 
 // Global cache instance
@@ -56,6 +64,12 @@ func InitSQLCache() {
 		entries: list.New(),
 		lookup:  make(map[string]*list.Element),
 		maxSize: CACHE_MAX_SIZE,
+		// --- NEW: Initialize Stats ---
+		totalQueries: 0,
+		directHits:   0,
+		semanticHits: 0,
+		cacheMisses:  0,
+		// --- End NEW ---
 	}
 }
 
@@ -63,10 +77,10 @@ func InitSQLCache() {
 func InitBackingDB() {
 	dbMutex.Lock()
 	defer dbMutex.Unlock()
-	
+
 	BackingDatabase = make(map[string]*Table)
 
-	// Create a sample 'users' table
+	// Create a sample 'users' table (your original data)
 	users := &Table{
 		Name:    "users",
 		Columns: []string{"id", "name", "age"},
@@ -83,11 +97,16 @@ func InitBackingDB() {
 			{"id": 10, "name": "Judy", "age": 64},
 			{"id": 11, "name": "Karl", "age": 19},
 			{"id": 12, "name": "Laura", "age": 8},
+			// --- NEW: More users for 'age' queries ---
+			{"id": 13, "name": "Mike", "age": 91},
+			{"id": 14, "name": "Nina", "age": 92},
+			{"id": 15, "name": "Oscar", "age": 88},
+			// --- End NEW ---
 		},
 	}
 	BackingDatabase["users"] = users
 
-	// Create a sample 'products' table
+	// Create a sample 'products' table (your original data)
 	products := &Table{
 		Name:    "products",
 		Columns: []string{"id", "item", "stock"},
@@ -98,6 +117,30 @@ func InitBackingDB() {
 		},
 	}
 	BackingDatabase["products"] = products
+
+	// --- NEW: 'server_logs' table for our test scenario ---
+	serverLogs := &Table{
+		Name:    "server_logs",
+		Columns: []string{"id", "server_name", "cpu_load", "status"},
+		Rows: []Row{
+			{"id": 1001, "server_name": "web-01", "cpu_load": 25, "status": "OK"},
+			{"id": 1002, "server_name": "web-02", "cpu_load": 82, "status": "WARNING"},
+			{"id": 1003, "server_name": "db-01", "cpu_load": 91, "status": "WARNING"},
+			{"id": 1004, "server_name": "api-01", "cpu_load": 75, "status": "OK"},
+			{"id": 1005, "server_name": "web-01", "cpu_load": 30, "status": "OK"},
+			{"id": 1006, "server_name": "web-03", "cpu_load": 85, "status": "WARNING"},
+			{"id": 1007, "server_name": "api-02", "cpu_load": 96, "status": "ERROR"},
+			{"id": 1008, "server_name": "db-01", "cpu_load": 92, "status": "WARNING"},
+			{"id": 1009, "server_name": "web-02", "cpu_load": 88, "status": "WARNING"},
+			{"id": 1010, "server_name": "cache-01", "cpu_load": 15, "status": "OK"},
+			{"id": 1011, "server_name": "web-01", "cpu_load": 40, "status": "OK"},
+			{"id": 1012, "server_name": "api-01", "cpu_load": 81, "status": "WARNING"},
+			{"id": 1013, "server_name": "db-02", "cpu_load": 99, "status": "ERROR"},
+			{"id": 1014, "server_name": "web-03", "cpu_load": 89, "status": "WARNING"},
+		},
+	}
+	BackingDatabase["server_logs"] = serverLogs
+	// --- End NEW ---
 }
 
 // Get from cache (and update LRU)
@@ -110,6 +153,9 @@ func (sc *SemanticCache) Get(queryString string) (*CacheEntry, bool) {
 		sc.entries.MoveToFront(elem)
 		entry := elem.Value.(*CacheEntry)
 		entry.Timestamp = time.Now()
+		// --- NEW: Update Stat ---
+		sc.directHits++
+		// --- End NEW ---
 		return entry, true
 	}
 	return nil, false
@@ -134,11 +180,8 @@ func (sc *SemanticCache) AddToCache(queryString string, query *QueryAST, results
 		lruElement := sc.entries.Back()
 		if lruElement != nil {
 			lruEntry := sc.entries.Remove(lruElement).(*CacheEntry)
-			// Remove from lookup map. We need the original query string,
-			// which we don't have...
-			// For a robust LRU, the map key should be the query string.
-			// The original `lookup` map uses the query string, so we find it.
-			delete(sc.lookup, lruEntry.Query.OriginalString) 
+			// Remove from lookup map.
+			delete(sc.lookup, lruEntry.Query.OriginalString)
 		}
 	}
 
@@ -153,31 +196,94 @@ func (sc *SemanticCache) AddToCache(queryString string, query *QueryAST, results
 }
 
 // findSemanticHit iterates the cache (MRU to LRU) looking for a superset query.
-func (sc *SemanticCache) FindSemanticHit(newQuery *QueryAST) (*Table, bool) {
+// --- NEW: Returns the matching cached query for logging ---
+func (sc *SemanticCache) FindSemanticHit(newQuery *QueryAST) (*Table, *QueryAST, bool) {
 	sc.mu.RLock()
 	defer sc.mu.RUnlock()
-	
+
 	// Iterate from MRU (front) to LRU (back)
 	for e := sc.entries.Front(); e != nil; e = e.Next() {
 		cachedEntry := e.Value.(*CacheEntry)
-		
+
 		if isQuerySubset(newQuery, cachedEntry.Query) {
 			// Found a superset!
 			// Now, filter the superset's results in memory.
 			filteredResults := filterResultsFromSuperset(cachedEntry.Results, newQuery.Where)
-			
+
 			// Update the superset's timestamp (as it was used)
 			cachedEntry.Timestamp = time.Now()
-			// Move to front (this requires a write lock, so we'll skip for simplicity
-			// in this read-lock section, but in a real system you'd upgrade the lock)
-			// For now, just returning the result is fine.
+			// We can't move to front here without a Write lock,
+			// but we can update the stat.
 			
-			return filteredResults, true
+			// We'll update stats in HandleSQL as we need the RLock here.
+
+			return filteredResults, cachedEntry.Query, true
 		}
 	}
-	
-	return nil, false
+
+	return nil, nil, false
 }
+
+// --- NEW: Function to get cache statistics ---
+func (sc *SemanticCache) GetCacheStats() string {
+	sc.mu.RLock()
+	defer sc.mu.RUnlock()
+
+	var directHitRatio float64 = 0
+	var semanticHitRatio float64 = 0
+	var missRatio float64 = 0
+
+	if sc.totalQueries > 0 {
+		directHitRatio = (float64(sc.directHits) / float64(sc.totalQueries)) * 100
+		semanticHitRatio = (float64(sc.semanticHits) / float64(sc.totalQueries)) * 100
+		missRatio = (float64(sc.cacheMisses) / float64(sc.totalQueries)) * 100
+	}
+	
+	totalHits := sc.directHits + sc.semanticHits
+	var totalHitRatio float64 = 0
+	if sc.totalQueries > 0 {
+		totalHitRatio = (float64(totalHits) / float64(sc.totalQueries)) * 100
+	}
+
+
+	stats := fmt.Sprintf(
+		"--- SQL Cache Statistics ---\n"+
+			"Total Queries: %d\n"+
+			"Total Cache Hits: %d (%.2f%%)\n"+
+			"  - Direct Hits:   %d (%.2f%%)\n"+
+			"  - Semantic Hits: %d (%.2f%%)\n"+
+			"Cache Misses: %d (%.2f%%)\n"+
+			"Cache Size: %d / %d",
+		sc.totalQueries,
+		totalHits, totalHitRatio,
+		sc.directHits, directHitRatio,
+		sc.semanticHits, semanticHitRatio,
+		sc.cacheMisses, missRatio,
+		sc.entries.Len(), sc.maxSize,
+	)
+	return stats
+}
+
+// --- NEW: Helper functions to increment stats safely ---
+func (sc *SemanticCache) IncrementTotalQueries() {
+	sc.mu.Lock()
+	defer sc.mu.Unlock()
+	sc.totalQueries++
+}
+
+func (sc *SemanticCache) IncrementSemanticHits() {
+	sc.mu.Lock()
+	defer sc.mu.Unlock()
+	sc.semanticHits++
+}
+
+func (sc *SemanticCache) IncrementCacheMisses() {
+	sc.mu.Lock()
+	defer sc.mu.Unlock()
+	sc.cacheMisses++
+}
+// --- End NEW ---
+
 
 // Dummy function, as we're not using the old storage for this.
 // We keep this to satisfy the original file structure.

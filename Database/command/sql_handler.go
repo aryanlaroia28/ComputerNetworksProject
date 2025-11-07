@@ -10,19 +10,12 @@ import (
 
 // HandleSQL is the main entry point for SQL queries.
 func HandleSQL(input string, c net.Conn) {
+	// --- NEW: Start timer and update total queries ---
+	startTime := time.Now()
+	SQLCache.IncrementTotalQueries()
+	// --- End NEW ---
+
 	// 1. Extract the raw SQL query string.
-	// We assume a simple, non-RESP format for this new command,
-	// e.g., "SELECT * FROM users WHERE age > 40"
-	// Or, if it follows the old format, it's wrapped.
-	// Let's assume the `input` is just the SQL string for now.
-	// The server.go logic will be adjusted to just pass the query.
-	
-	// Let's re-parse based on the server's brittle split.
-	// *2\r\n$3\r\nSQL\r\n$27\r\nSELECT * FROM users WHERE age > 40
-	// This would mean parts[4] is the SQL.
-	// But server.go just does `strings.Contains`.
-	// Let's make a new simple parser for the input.
-	
 	sqlQueryString := extractSQLQuery(input)
 	if sqlQueryString == "" {
 		c.Write([]byte("-ERR invalid SQL command\r\n"))
@@ -40,26 +33,41 @@ func HandleSQL(input string, c net.Conn) {
 
 	// 3. Check for a Direct Cache Hit
 	if entry, hit := SQLCache.Get(sqlQueryString); hit {
-		// Cache Hit!
-		fmt.Println("Cache HIT (Direct)")
+		// Cache Hit! (Get() increments the stat)
+		// --- NEW: Improved Logging ---
+		elapsed := time.Since(startTime)
+		fmt.Printf("[QUERY: %s] \n -> Cache HIT (Direct) | Time: %s\n", sqlQueryString, elapsed)
+		// --- End NEW ---
 		resp := formatResults(entry.Results)
 		c.Write([]byte(resp))
 		return
 	}
 
 	// 4. Check for a Semantic Cache Hit
-	if results, hit := SQLCache.FindSemanticHit(queryAST); hit {
+	// --- NEW: Updated signature to get cachedQuery ---
+	if results, cachedQuery, hit := SQLCache.FindSemanticHit(queryAST); hit {
 		// Semantic Hit!
-		fmt.Println("Cache HIT (Semantic)")
+		// --- NEW: Update Stat ---
+		SQLCache.IncrementSemanticHits()
+		// --- NEW: Improved Logging with AST ---
+		elapsed := time.Since(startTime)
+		fmt.Printf("[QUERY: %s] \n -> Cache HIT (Semantic) | Time: %s\n", sqlQueryString, elapsed)
+		fmt.Println("   | Fulfilling from cached superset query:")
+		fmt.Printf("   |--- Cached Query: %s\n", cachedQuery.OriginalString)
+		// This prints the AST of the *cached query*
+		fmt.Printf("   |--- Cached %s\n", cachedQuery.String()) 
+		// --- End NEW ---
+
 		resp := formatResults(results)
 		c.Write([]byte(resp))
-		// Note: We don't add this subset query to the cache,
-		// as the superset is already cached and is more valuable.
 		return
 	}
 
 	// 5. Cache Miss
-	fmt.Println("Cache MISS")
+	// --- NEW: Update Stat ---
+	SQLCache.IncrementCacheMisses()
+	// --- End NEW ---
+
 	// Simulate the I/O penalty for a cache miss
 	time.Sleep(CACHE_MISS_PENALTY)
 
@@ -74,9 +82,24 @@ func HandleSQL(input string, c net.Conn) {
 	SQLCache.AddToCache(sqlQueryString, queryAST, results)
 
 	// 8. Return results to client
+	// --- NEW: Improved Logging ---
+	elapsed := time.Since(startTime)
+	fmt.Printf("[QUERY: %s] \n -> Cache MISS | Time: %s (Includes %s I/O penalty)\n", sqlQueryString, elapsed, CACHE_MISS_PENALTY)
+	// --- End NEW ---
+
 	resp := formatResults(results)
 	c.Write([]byte(resp))
 }
+
+// --- NEW: Handler for SQLSTATS command ---
+func HandleSQLStats(c net.Conn) {
+	stats := SQLCache.GetCacheStats()
+	// Format as a bulk string for the client
+	resp := fmt.Sprintf("$%d\r\n%s\r\n", len(stats), stats)
+	c.Write([]byte(resp))
+}
+// --- End NEW ---
+
 
 // extractSQLQuery assumes the input is the raw buffer and finds the SQL.
 // This is fragile and mimics your existing `strings.Contains`.
@@ -85,13 +108,13 @@ func extractSQLQuery(input string) string {
 	// A simple heuristic: find "SELECT" and return the rest.
 	// This assumes the command is just the SQL query itself.
 	// e.g. "SELECT * FROM users WHERE age > 40"
-	
+
 	// Let's assume the server is passing the *full* RESP buffer
 	// e.g. *2\r\n$3\r\nSQL\r\n$27\r\nSELECT * FROM users WHERE age > 40\r\n
 	// Your existing code uses `strings.Split(input, "\r\n")`
-	
+
 	parts := strings.Split(input, "\r\n")
-	
+
 	// Let's define a new command format: "SQL <query>"
 	// RESP: *2\r\n$3\r\nSQL\r\n$<len>\r\n<query>\r\n
 	// parts[0] = *2
@@ -106,9 +129,9 @@ func extractSQLQuery(input string) string {
 		}
 		// Fallback for just "SELECT..."
 	}
-	
+
 	// Fallback for "SELECT ..." as the first command
-	if len(parts) > 4 && strings.Contains(parts[0], "SELECT"){
+	if len(parts) > 4 && strings.Contains(parts[0], "SELECT") {
 		// This is likely wrong, let's assume `input` is just the query.
 	}
 
@@ -126,16 +149,24 @@ func extractSQLQuery(input string) string {
 			return strings.TrimSpace(query)
 		}
 	}
-	
+
 	// Let's refine the "SQL" command assumption from above
 	// *2\r\n$3\r\nSQL\r\n$27\r\nSELECT * FROM users WHERE age > 40\r\n
 	if len(parts) > 4 && strings.EqualFold(parts[2], "SQL") {
 		return parts[4]
 	}
 
+	// --- NEW: Fallback for SQLSTATS command ---
+	if len(parts) >= 3 && strings.EqualFold(parts[2], "SQLSTATS") {
+		return "SQLSTATS" // Not a query, but `extract` is the wrong place.
+	}
+	if strings.Contains(strings.ToUpper(input), "SQLSTATS") {
+		return "SQLSTATS"
+	}
+	// --- End NEW ---
+
 	return "" // No valid SQL found
 }
-
 
 // executeOnBackingStore runs the query against the main data.
 func executeOnBackingStore(query *QueryAST) (*Table, error) {
@@ -148,7 +179,7 @@ func executeOnBackingStore(query *QueryAST) (*Table, error) {
 	}
 
 	var resultRows []Row
-	
+
 	// Filter rows
 	for _, row := range table.Rows {
 		if query.Where == nil || checkCondition(row, query.Where) {
@@ -157,10 +188,6 @@ func executeOnBackingStore(query *QueryAST) (*Table, error) {
 	}
 
 	// Apply column selection
-	// For simplicity, we'll return all columns if "*"
-	// Otherwise, we'd filter the map keys in each row.
-	// Let's do that.
-	
 	finalRows := []Row{}
 	for _, row := range resultRows {
 		if query.SelectColumns[0] == "*" {
@@ -175,7 +202,7 @@ func executeOnBackingStore(query *QueryAST) (*Table, error) {
 			finalRows = append(finalRows, newRow)
 		}
 	}
-	
+
 	finalCols := query.SelectColumns
 	if finalCols[0] == "*" {
 		finalCols = table.Columns
@@ -189,30 +216,57 @@ func executeOnBackingStore(query *QueryAST) (*Table, error) {
 }
 
 // formatResults converts a Table into a RESP bulk string.
+// --- NEW: Improved formatting ---
 func formatResults(table *Table) string {
-	if len(table.Rows) == 0 {
-		return "$-1\r\n" // Nil bulk string (or we could do empty table)
+	if table == nil || len(table.Rows) == 0 {
+		return "$-1\r\n" // Nil bulk string (empty result)
 	}
 
 	var sb strings.Builder
-	
-	// Header
-	sb.WriteString(strings.Join(table.Columns, " | "))
+
+	// Calculate column widths
+	colWidths := make(map[string]int)
+	for _, col := range table.Columns {
+		colWidths[col] = len(col) // Start with header length
+	}
+
+	for _, row := range table.Rows {
+		for _, col := range table.Columns {
+			valStr := fmt.Sprintf("%v", row[col])
+			if len(valStr) > colWidths[col] {
+				colWidths[col] = len(valStr)
+			}
+		}
+	}
+
+	// --- Print Header ---
+	var headerLine []string
+	var separatorLine []string
+	for _, col := range table.Columns {
+		width := colWidths[col]
+		headerLine = append(headerLine, fmt.Sprintf("%-*s", width, col))
+		separatorLine = append(separatorLine, strings.Repeat("-", width))
+	}
+	sb.WriteString(strings.Join(headerLine, " | "))
 	sb.WriteString("\n")
-	sb.WriteString(strings.Repeat("-", len(sb.String())-1))
+	sb.WriteString(strings.Join(separatorLine, "-+-"))
 	sb.WriteString("\n")
 
-	// Rows
+	// --- Print Rows ---
 	for _, row := range table.Rows {
-		var vals []string
+		var rowLine []string
 		for _, col := range table.Columns {
-			vals = append(vals, fmt.Sprintf("%v", row[col]))
+			width := colWidths[col]
+			rowLine = append(rowLine, fmt.Sprintf("%-*v", width, row[col]))
 		}
-		sb.WriteString(strings.Join(vals, " | "))
+		sb.WriteString(strings.Join(rowLine, " | "))
 		sb.WriteString("\n")
 	}
 
 	tableString := sb.String()
+	// Add row count
+	tableString += fmt.Sprintf("\n(%d rows)\n", len(table.Rows))
+
 	return fmt.Sprintf("$%d\r\n%s\r\n", len(tableString), tableString)
 }
 
@@ -223,7 +277,7 @@ func isQuerySubset(newQuery, cachedQuery *QueryAST) bool {
 	if newQuery.FromTable != cachedQuery.FromTable {
 		return false
 	}
-	
+
 	// Check select columns (new must be subset of cached)
 	if cachedQuery.SelectColumns[0] != "*" {
 		// If cached isn't "*", new must have columns <= cached
@@ -238,7 +292,7 @@ func isQuerySubset(newQuery, cachedQuery *QueryAST) bool {
 		}
 	}
 	// If cached is "*", new can be anything (including "*" or "col1, col2")
-	
+
 	// Check WHERE clause (new must be stricter than cached)
 	return isConditionSubset(newQuery.Where, cachedQuery.Where)
 }
@@ -250,19 +304,19 @@ func isConditionSubset(newCond, cachedCond *WhereCondition) bool {
 		// New query is always a subset (e.g., "... WHERE age > 50")
 		return true
 	}
-	
+
 	if newCond == nil {
 		// New query is "SELECT * FROM table"
 		// Cached query is "... WHERE age > 40"
 		// This is NOT a subset.
 		return false
 	}
-	
+
 	// Both queries have WHERE clauses.
 	if newCond.Column != cachedCond.Column {
 		return false // Conditions are on different columns
 	}
-	
+
 	// Try to compare as integers
 	newVal, newIsInt := newCond.GetAsInt()
 	cachedVal, cachedIsInt := cachedCond.GetAsInt()
@@ -287,11 +341,23 @@ func isConditionSubset(newCond, cachedCond *WhereCondition) bool {
 		}
 		// ... more rules could be added here ...
 	}
-	
+
 	// Fallback for string comparison
 	if newCond.Operator == "=" && cachedCond.Operator == "=" {
 		return newCond.Value == cachedCond.Value
 	}
+	
+	// --- NEW: Handle subset for string equals ---
+	// e.g. newCond = "status = 'ERROR'"
+	//      cachedCond = nil (e.g. from "cpu_load > 80")
+	// This is handled by the `isConditionSubset` logic in filterResults...
+	// The main `isQuerySubset` just checks if the *new query's* conditions
+	// are compatible with and stricter than the *cached query's*.
+	
+	// Our new test case:
+	// newCond: cpu_load > 95
+	// cachedCond: cpu_load > 80
+	// This will pass: (newOp == ">" && cachedOp == ">") && (95 >= 80) == true
 
 	return false
 }
@@ -308,16 +374,20 @@ func filterResultsFromSuperset(superset *Table, newCondition *WhereCondition) *T
 			filteredRows = append(filteredRows, row)
 		}
 	}
-	
+
 	return &Table{
 		Name:    "filtered_results",
-		Columns: superset.Columns,
+		Columns: superset.Columns, // Columns are from the superset
 		Rows:    filteredRows,
 	}
 }
 
 // checkCondition evaluates a row against a WHERE condition.
 func checkCondition(row Row, cond *WhereCondition) bool {
+	if cond == nil {
+		return true // No condition means the row passes
+	}
+	
 	val, ok := row[cond.Column]
 	if !ok {
 		return false // Column doesn't exist in row

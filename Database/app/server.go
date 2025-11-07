@@ -1,13 +1,13 @@
 package main
 
 import (
+	"LiteDB/command"
 	"fmt"
 	"net"
 	"os"
 	"strings"
-	"time"
 	"sync"
-	"LiteDB/command"
+	"time"
 )
 
 var _ = net.Listen
@@ -97,9 +97,14 @@ func handleConnection(c net.Conn) {
 				command.QueueCommand(input)
 			}
 		} else {
-			// --- ADDED SQL HANDLER ---
+			// --- MODIFIED SQL HANDLER ---
 			// We check for "SELECT" or the new "SQL" command
-			if strings.Contains(strings.ToUpper(input), "SELECT") || strings.Contains(strings.ToUpper(input), "SQL") {
+			// --- NEW: Added SQLSTATS ---
+			upperInput := strings.ToUpper(input)
+			if strings.Contains(upperInput, "SQLSTATS") {
+				command.HandleSQLStats(c)
+			// --- End NEW ---
+			} else if strings.Contains(upperInput, "SELECT") || strings.Contains(upperInput, "SQL") {
 				command.HandleSQL(input, c)
 			} else if strings.Contains(input, "ECHO") {
 				command.HandleEcho(input, c)

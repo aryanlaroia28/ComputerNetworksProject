@@ -2,6 +2,7 @@ package command
 
 import (
 	"errors"
+	"fmt"
 	"regexp"
 	"strconv"
 	"strings"
@@ -37,10 +38,10 @@ func ParseSQL(input string) (*QueryAST, error) {
 	}
 
 	ast := &QueryAST{OriginalString: input}
-	
+
 	// Try parsing with WHERE clause
 	matches := sqlRegex.FindStringSubmatch(input)
-	
+
 	if matches != nil {
 		// Matched: SELECT ... FROM ... WHERE ...
 		colStr := strings.TrimSpace(matches[1])
@@ -51,7 +52,7 @@ func ParseSQL(input string) (*QueryAST, error) {
 		}
 
 		ast.FromTable = strings.TrimSpace(matches[2])
-		
+
 		ast.Where = &WhereCondition{
 			Column:   strings.TrimSpace(matches[3]),
 			Operator: strings.TrimSpace(matches[4]),
@@ -87,3 +88,39 @@ func (wc *WhereCondition) GetAsInt() (int, bool) {
 	}
 	return i, true
 }
+
+// --- NEW: String() method for pretty-printing the WhereCondition ---
+func (wc *WhereCondition) String() string {
+	if wc == nil {
+		return "N/A"
+	}
+	// Add quotes if value is not an integer
+	_, isInt := wc.GetAsInt()
+	valStr := wc.Value
+	if !isInt {
+		valStr = fmt.Sprintf("'%s'", valStr)
+	}
+	return fmt.Sprintf("%s %s %s", wc.Column, wc.Operator, valStr)
+}
+
+// --- NEW: String() method for pretty-printing the QueryAST ---
+func (ast *QueryAST) String() string {
+	if ast == nil {
+		return "<nil>"
+	}
+	
+	cols := strings.Join(ast.SelectColumns, ", ")
+	whereStr := "None"
+	if ast.Where != nil {
+		whereStr = ast.Where.String()
+	}
+
+	return fmt.Sprintf(
+		"AST:\n"+
+			"  - SELECT: %s\n"+
+			"  - FROM:   %s\n"+
+			"  - WHERE:  %s",
+		cols, ast.FromTable, whereStr,
+	)
+}
+// --- End NEW ---
