@@ -5,7 +5,7 @@ import (
 	"fmt"
 	"net"
 	"os"
-	"LiteDB/storage"
+	"MiniRedisDb/storage"
 )
 
 // HandleLoad processes the LOAD command

@@ -7,7 +7,7 @@ const TIME_WINDOW = 20; // Time window in seconds
 
 app.set('view engine', 'ejs'); // Set up EJS for templating
 
-// Connect to Redis (LiteDB) function
+// Connect to Redis (MiniRedisDb) function
 function connectLiteDB() {
     const client = new net.Socket();
     client.connect(6379, '127.0.0.1');

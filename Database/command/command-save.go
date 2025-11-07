@@ -5,7 +5,7 @@ import(
 	"net"
 	"os"
 	"encoding/json"
-	"LiteDB/storage"
+	"MiniRedisDb/storage"
 )
 
 func HandleSave(c net.Conn){

@@ -5,7 +5,7 @@ import (
 	"net"
 	"strings"
 
-	"LiteDB/config"
+	"MiniRedisDb/config"
 )
 
 func HandleConfigGet(input string, c net.Conn) {

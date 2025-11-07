@@ -1,13 +1,13 @@
 
-# LiteDB Project
+# MiniRedisDb Project
 
 ## Overview
 
-LiteDB is a lightweight, file-based NoSQL database created for easy storage and retrieval of structured data. The project is designed to be simple and flexible, with three primary components that demonstrate LiteDB's capabilities in various contexts:
+MiniRedisDb is a lightweight, file-based NoSQL database created for easy storage and retrieval of structured data. The project is designed to be simple and flexible, with three primary components that demonstrate MiniRedisDb's capabilities in various contexts:
 
 1. **Database** - A standalone database engine written in Go, supporting basic CRUD operations and custom commands.
-2. **Rate Limiter** - A middleware implemented in Node.js that uses LiteDB to track request counts and limit user access to resources within specified time windows.
-3. **Chat App** - A basic real-time chat application that uses LiteDB as a backend to store and retrieve chat messages.
+2. **Rate Limiter** - A middleware implemented in Node.js that uses MiniRedisDb to track request counts and limit user access to resources within specified time windows.
+3. **Chat App** - A basic real-time chat application that uses MiniRedisDb as a backend to store and retrieve chat messages.
 
 This project is ideal for learning about file-based databases, integrating custom databases with applications, and using Go and Node.js to build modular components. 
 
@@ -24,8 +24,8 @@ This project is ideal for learning about file-based databases, integrating custo
 - **Real-time feedback** - Displays information about remaining requests and wait times.
 
 ### Chat App
-- **Real-time messaging** - Supports real-time chat with data storage in LiteDB for easy message retrieval.
-- **Lightweight backend** - Uses LiteDB as the backend database, providing a simple setup without the need for complex database infrastructure.
+- **Real-time messaging** - Supports real-time chat with data storage in MiniRedisDb for easy message retrieval.
+- **Lightweight backend** - Uses MiniRedisDb as the backend database, providing a simple setup without the need for complex database infrastructure.
 - **Scalable** - Designed to handle small-scale chat functionality, ideal for testing and learning.
 
 ---
@@ -108,16 +108,16 @@ LOAD                      # Loads all data from the backup JSON file into the in
 
 ### Database Setup
 
-1. **Run the LiteDB Server**  
+1. **Run the MiniRedisDb Server**  
    - Navigate to the `Database/app` directory:
      ```bash
-     cd LiteDB/Database/app
+     cd MiniRedisDb/Database/app
      ```
    - Start the server:
      ```bash
      go run server.go
      ```
-   - This starts the LiteDB server, which will handle requests from the rate limiter and chat app.
+   - This starts the MiniRedisDb server, which will handle requests from the rate limiter and chat app.
 
 2. **Install Redis CLI**  
    - Follow the instructions on [Redis installation page](https://redis.io/docs/latest/operate/oss_and_stack/install/install-redis/) to install the Redis CLI for testing and managing rate limits.
@@ -127,13 +127,13 @@ LOAD                      # Loads all data from the backup JSON file into the in
 The rate limiter middleware limits the number of requests allowed within a time window. This helps prevent abuse and control server load. The rate and time window are adjustable based on application needs.
 
 #### Prerequisites
-- Ensure the LiteDB server is running as outlined above.
+- Ensure the MiniRedisDb server is running as outlined above.
 
 #### Installation and Setup
 1. Clone the repository.
 2. Navigate to the rate limiter directory:
    ```bash
-   cd LiteDB/rate-limiter
+   cd MiniRedisDb/rate-limiter
    ```
 3. Install dependencies:
    ```bash
@@ -159,16 +159,16 @@ const TIME_WINDOW = 20; // Time window in seconds within which requests are limi
 
 ### Chat App
 
-The chat app enables real-time messaging and uses LiteDB as the backend storage for messages. 
+The chat app enables real-time messaging and uses MiniRedisDb as the backend storage for messages. 
 
 #### Prerequisites
-- Ensure the LiteDB server is running.
+- Ensure the MiniRedisDb server is running.
 
 #### Installation and Setup
 1. Clone the repository if not already done.
 2. Navigate to the chat app directory:
    ```bash
-   cd LiteDB/LiteDB-chat-app
+   cd MiniRedisDb/MiniRedisDb-chat-app
    ```
 3. Install dependencies:
    ```bash

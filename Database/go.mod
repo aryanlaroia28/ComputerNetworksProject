@@ -6,6 +6,6 @@
 //
 // DON'T EDIT THIS!
 
-module LiteDB
+module MiniRedisDb
 
 go 1.22
