@@ -5,46 +5,60 @@ import { getKindeServerSession } from "@kinde-oss/kinde-auth-nextjs/server";
 import { redirect } from "next/navigation";
 
 const page = async () => {
-	const { isAuthenticated } = getKindeServerSession();
-	if (await isAuthenticated()) return redirect("/");
+    const { isAuthenticated } = getKindeServerSession();
+    if (await isAuthenticated()) return redirect("/");
 
-	return (
-		<div className='flex h-screen w-full'>
-			<div
-				className='flex-1 flex overflow-hidden dark:bg-[#651c2b55] bg-[#651c2b] relative 
-      justify-center items-center'
-			>
-				
+    return (
+        <div className='flex h-screen w-full'>
+            {/* LEFT PANE: The Minimalist Login Card */}
+            <div
+                // Outer container: takes up screen space with a subtle background
+                className='flex-1 flex flex-col p-8 relative justify-center items-center bg-gray-50 dark:bg-gray-900'
+            >
+                {/* Creative Card Container (Logo + Buttons) with Shadow and Border */}
+                <div 
+                    className='flex flex-col gap-8 items-center p-12 md:p-16 rounded-3xl bg-white dark:bg-gray-800 max-w-xs sm:max-w-sm w-full transition-all duration-500 
+                                
+                                // Creative Shadow Effect: Prominent, color-tinted shadow
+                                shadow-2xl shadow-red-500/30 dark:shadow-red-900/40 
+                                
+                                // Subtle Border Accent (Color Theory)
+                                border border-red-500/10 dark:border-red-600/20' 
+                >
+                    
+                    {/* LiteDB Logo - Focused and Enhanced */}
+                    <Image
+                        src={"/logo.png"}
+                        alt='LiteDB Logo'
+                        width={220} // Slightly increased logo size for focus
+                        height={126}
+                        // Logo Effect: Soft drop shadow to create a 'glow'
+                        className='pointer-events-none select-none filter drop-shadow-lg shadow-red-500/50 dark:shadow-red-400/30' 
+                    />
 
-				<div className='flex flex-col gap-2 px-4 xl:ml-0 text-center md:text-start font-semibold'>
-					<Image
-						 src={"/logo.png"}
-						 alt='LiteDB Logo'
-						 width={300}
-						 height={173}
-						 className='z-0 pointer-events-none select-none'
-						 style={{ paddingLeft: '55px' }}
-					/>
-
-					<p className='text-2xl md:text-3xl text-balance z-10'>
-						The <span className='bg-red-500 px-2 font-bold text-white'>ULTIMATE</span> chat app
-					</p>
-
-					<p className='text-2xl md:text-3xl mb-32 text-balance z-10'>
-						You <span className='bg-green-500/90 font-bold px-2 text-white'>NEED TO</span> build
-					</p>
-					<AuthButtons />
-				</div>
-			</div>
-			<div className='flex-1 relative overflow-hidden justify-center items-center hidden md:flex bg-noise'>
-				<Image
-					src={"/hero-right.png"}
-					alt='Hero Image'
-					fill
-					className='object-cover dark:opacity-60 opacity-90 pointer-events-none select-none h-full'
-				/>
-			</div>
-		</div>
-	);
+                    {/* Auth Buttons */}
+                    <AuthButtons />
+                </div>
+            </div>
+            
+            {/* RIGHT PANE: Visual Element (Hero Image) - Less Obtrusive */}
+            <div className='flex-1 relative overflow-hidden justify-center items-center hidden md:flex bg-gray-100 dark:bg-gray-800'>
+                <div className='absolute inset-0 z-0'>
+                    <Image
+                        src={"/hero-right.png"}
+                        alt='Hero Image'
+                        fill
+                        // Toned down opacity to make it a background texture/element
+                        className='object-cover opacity-50 dark:opacity-20 pointer-events-none select-none'
+                    />
+                </div>
+                
+                {/* Optional: Add a subtle overlay or text on the image side for balance */}
+                <div className="z-10 text-center p-10">
+                    {/* Text is removed as requested */}
+                </div>
+            </div>
+        </div>
+    );
 };
 export default page;
