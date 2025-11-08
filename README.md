@@ -5,7 +5,7 @@
 
 MiniRedisDb is a lightweight, file-based NoSQL database created for easy storage and retrieval of structured data. The project is designed to be simple and flexible, with three primary components that demonstrate MiniRedisDb's capabilities in various contexts:
 
-1. **Database** - A standalone database engine written in Go, supporting basic CRUD operations and custom commands.
+1. **Database** - A standalone database engine written in Go, supporting basic CRUD operations, custom commands, SQL and graph based queries.
 2. **Rate Limiter** - A middleware implemented in Node.js that uses MiniRedisDb to track request counts and limit user access to resources within specified time windows.
 3. **Chat App** - A basic real-time chat application that uses MiniRedisDb as a backend to store and retrieve chat messages.
 
@@ -17,6 +17,9 @@ This project is ideal for learning about file-based databases, integrating custo
 - **File-based storage** - Stores data in a lightweight file format, making it easy to deploy and operate without complex setup.
 - **Custom commands** - Supports commands beyond typical CRUD operations, allowing for flexible data interactions (e.g., incrementing values, transactions).
 - **Backup and restore** - Provides commands to save and load data, supporting data persistence and migration.
+- **Simple SQL Query Support** - Supports `SELECT`, `FROM`, and `WHERE` clauses for relational data querying on pre-defined tables.  
+- **Semantic Caching Layer** - An intelligent, in-memory cache for SQL queries. It stores not just exact query results (Direct Hits), but also superset results. This allows the system to answer new, more specific queries (e.g., `SELECT * FROM trades WHERE price > 2000`) by filtering existing cached results (e.g., `SELECT * FROM trades WHERE price > 100`), drastically reducing database load and response time.  
+- **LRU Eviction** - The semantic cache uses a Least Recently Used (LRU) policy to manage its fixed size, ensuring the most relevant query results remain in memory.
   
 ### Rate Limiter
 - **Request rate limiting** - Limits the frequency of requests to prevent abuse, with customizable rates and time windows.
@@ -82,6 +85,18 @@ To run this project, you need the following software installed:
 14. **CONFIG GET dbfilename** - Provides the name of the backup file used for persistence (backup.json).
 
 
+## Advanced SQL Query Syntax
+MiniRedisDb also supports a separate SQL-like query interface with a built-in semantic cache.
+
+### SQL
+Executes a simple SQL query against the backing database or semantic cache.
+
+**Syntax:**  
+**Details:** Supports `SELECT <cols> FROM <table> WHERE <col> <op> <val>`.
+
+**Example:**  
+SQL SELECT * FROM trades WHERE price > 100
+
 ---
 
 ## Usage Example
@@ -102,6 +117,11 @@ SAVE                      # Manually saves the current state
 LOAD                      # Loads all data from the backup JSON file into the in-memory map
 ```
 
+## Usage Example of SQL-type queries
+
+```bash
+echo -NoNewline "*2`r`n`$3`r`nSQL`r`n`$31`r`nSELECT * FROM users WHERE age > 20`r`n" | ncat localhost 6379                       # returns a query result as a table and the caching details
+```
 ---
 
 ## Setup Instructions
@@ -122,6 +142,19 @@ LOAD                      # Loads all data from the backup JSON file into the in
 2. **Install Redis CLI**  
    - Follow the instructions on [Redis installation page](https://redis.io/docs/latest/operate/oss_and_stack/install/install-redis/) to install the Redis CLI for testing and managing rate limits.
 
+3. **Running SQL Queries (PowerShell)**
+
+   - Open another terminal and run:
+
+   - Run a single query:
+   ```bash
+      echo -NoNewline "*2`r`n`$3`r`nSQL`r`n`$31`r`nSELECT * FROM users WHERE age > 20`r`n" | ncat localhost 6379
+   ```
+
+   - Run the Semantic Cache Scenario:
+   ```bash
+      echo -NoNewline "*1`r`n`$11`r`nSQLSCENARIO`r`n" | ncat localhost 6379
+   ```
 ### Rate Limiter
 
 The rate limiter middleware limits the number of requests allowed within a time window. This helps prevent abuse and control server load. The rate and time window are adjustable based on application needs.

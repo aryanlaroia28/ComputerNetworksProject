@@ -2,7 +2,7 @@ import net from 'net';
 import express from 'express';
 
 const app = express();
-const RATE_LIMIT = 10;
+const RATE_LIMIT = 4;
 const TIME_WINDOW = 20; // Time window in seconds
 
 app.set('view engine', 'ejs'); // Set up EJS for templating
